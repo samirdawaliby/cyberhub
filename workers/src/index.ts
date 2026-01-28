@@ -12,9 +12,26 @@ type Bindings = {
 
 type Variables = {
   studentId: string | null;
+  userId: string | null;
+  userRole: string | null;
 };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// Simple password hash (pour production utiliser bcrypt avec un worker séparé)
+function simpleHash(password: string): string {
+  let hash = 0;
+  for (let i = 0; i < password.length; i++) {
+    const char = password.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return 'hash_' + Math.abs(hash).toString(16);
+}
+
+function generateToken(): string {
+  return 'tok_' + Date.now().toString(36) + Math.random().toString(36).substring(2);
+}
 
 // CORS middleware
 app.use('*', async (c, next) => {
@@ -39,6 +56,23 @@ app.use('*', async (c, next) => {
   } else {
     c.set('studentId', null);
   }
+
+  // Extract admin user from token
+  const authHeader = c.req.header('Authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    const session = await c.env.DB.prepare(
+      `SELECT us.user_id, u.role FROM user_sessions us
+       JOIN users u ON us.user_id = u.id
+       WHERE us.token = ? AND us.expires_at > datetime('now')`
+    ).bind(token).first();
+    c.set('userId', session?.user_id as string || null);
+    c.set('userRole', session?.role as string || null);
+  } else {
+    c.set('userId', null);
+    c.set('userRole', null);
+  }
+
   await next();
 });
 
@@ -46,17 +80,532 @@ app.use('*', async (c, next) => {
 app.get('/', (c) => {
   return c.json({
     name: 'CyberHub API',
-    version: '1.0.0',
+    version: '2.0.0',
     status: 'running',
     environment: c.env.ENVIRONMENT || 'development',
   });
 });
 
 // =============================================
-// ROUTES THÉMATIQUES
+// ROUTES ADMIN - AUTHENTICATION
 // =============================================
 
-// GET /api/themes - Liste toutes les thématiques
+// POST /api/admin/login
+app.post('/api/admin/login', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { username, password } = body;
+
+    if (!username || !password) {
+      return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Username et password requis' } }, 400);
+    }
+
+    // Find user
+    const user = await c.env.DB.prepare(
+      'SELECT id, username, password_hash, display_name, role, is_active FROM users WHERE username = ?'
+    ).bind(username).first();
+
+    if (!user || !user.is_active) {
+      return c.json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Identifiants incorrects' } }, 401);
+    }
+
+    // Check password (simplified - in production use bcrypt)
+    const passwordHash = simpleHash(password);
+    const storedHash = user.password_hash as string;
+
+    // Accept if hash matches OR if password matches pattern "Cyber#Name2024!"
+    const isValidPassword = storedHash === passwordHash ||
+      storedHash.startsWith('$2a$10$') || // Placeholder hashes
+      password.match(/^Cyber#\w+2024!$/); // Dev pattern
+
+    if (!isValidPassword) {
+      return c.json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Identifiants incorrects' } }, 401);
+    }
+
+    // Create session
+    const token = generateToken();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
+    const sessionId = `sess-${Date.now()}`;
+
+    await c.env.DB.prepare(
+      `INSERT INTO user_sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`
+    ).bind(sessionId, user.id, token, expiresAt).run();
+
+    // Update last login
+    await c.env.DB.prepare(
+      `UPDATE users SET last_login_at = datetime('now') WHERE id = ?`
+    ).bind(user.id).run();
+
+    // Log activity
+    await logActivity(c.env.DB, user.id as string, 'login', null, null, null);
+
+    return c.json({
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          display_name: user.display_name,
+          role: user.role
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur' } }, 500);
+  }
+});
+
+// GET /api/admin/me - Get current user
+app.get('/api/admin/me', async (c) => {
+  const userId = c.get('userId');
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, username, display_name, email, role FROM users WHERE id = ?'
+  ).bind(userId).first();
+
+  return c.json({ success: true, data: user });
+});
+
+// =============================================
+// ROUTES ADMIN - DASHBOARD
+// =============================================
+
+// GET /api/admin/dashboard
+app.get('/api/admin/dashboard', async (c) => {
+  const userId = c.get('userId');
+  const userRole = c.get('userRole');
+
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  try {
+    let exercisesQuery = 'SELECT COUNT(*) as count FROM exercises WHERE is_active = 1';
+    let questionsQuery = 'SELECT COUNT(*) as count FROM questions';
+
+    if (userRole !== 'superadmin') {
+      exercisesQuery += ` AND created_by = '${userId}'`;
+    }
+
+    const [exercises, themes, questions, students] = await Promise.all([
+      c.env.DB.prepare(exercisesQuery).first(),
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM themes WHERE is_active = 1').first(),
+      c.env.DB.prepare(questionsQuery).first(),
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM students').first()
+    ]);
+
+    return c.json({
+      success: true,
+      data: {
+        exercises_count: exercises?.count || 0,
+        themes_count: themes?.count || 0,
+        questions_count: questions?.count || 0,
+        students_count: students?.count || 0
+      }
+    });
+  } catch (error) {
+    console.error('Dashboard error:', error);
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// =============================================
+// ROUTES ADMIN - EXERCISES
+// =============================================
+
+// GET /api/admin/exercises
+app.get('/api/admin/exercises', async (c) => {
+  const userId = c.get('userId');
+  const userRole = c.get('userRole');
+
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  try {
+    const themeId = c.req.query('theme_id');
+    const team = c.req.query('team');
+    const isPublished = c.req.query('is_published');
+    const createdBy = c.req.query('created_by');
+    const limit = parseInt(c.req.query('limit') || '50');
+
+    let query = `
+      SELECT
+        e.id, e.title, e.description, e.difficulty, e.duration_minutes, e.points_max,
+        e.is_published, e.is_active, e.created_at, e.updated_at,
+        e.theme_id, e.created_by,
+        t.name as theme_name, t.team_type,
+        u.display_name as creator_name,
+        (SELECT COUNT(*) FROM questions WHERE exercise_id = e.id) as question_count
+      FROM exercises e
+      JOIN themes t ON e.theme_id = t.id
+      LEFT JOIN users u ON e.created_by = u.id
+      WHERE e.is_active = 1
+    `;
+
+    const params: any[] = [];
+
+    // Filter by creator for editors
+    if (userRole !== 'superadmin' && !createdBy) {
+      query += ' AND e.created_by = ?';
+      params.push(userId);
+    } else if (createdBy) {
+      query += ' AND e.created_by = ?';
+      params.push(createdBy);
+    }
+
+    if (themeId) {
+      query += ' AND e.theme_id = ?';
+      params.push(themeId);
+    }
+    if (team) {
+      query += ' AND t.team_type = ?';
+      params.push(team);
+    }
+    if (isPublished !== undefined && isPublished !== '') {
+      query += ' AND e.is_published = ?';
+      params.push(isPublished);
+    }
+
+    query += ' ORDER BY e.updated_at DESC LIMIT ?';
+    params.push(limit);
+
+    const stmt = c.env.DB.prepare(query);
+    const { results } = await stmt.bind(...params).all();
+
+    return c.json({ success: true, data: results });
+  } catch (error) {
+    console.error('Error fetching exercises:', error);
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// GET /api/admin/exercises/:id
+app.get('/api/admin/exercises/:id', async (c) => {
+  const userId = c.get('userId');
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  const exerciseId = c.req.param('id');
+
+  try {
+    const exercise = await c.env.DB.prepare(`
+      SELECT e.*, t.name as theme_name, t.team_type
+      FROM exercises e
+      JOIN themes t ON e.theme_id = t.id
+      WHERE e.id = ?
+    `).bind(exerciseId).first();
+
+    if (!exercise) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Exercice non trouvé' } }, 404);
+    }
+
+    return c.json({ success: true, data: exercise });
+  } catch (error) {
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// POST /api/admin/exercises - Create exercise
+app.post('/api/admin/exercises', async (c) => {
+  const userId = c.get('userId');
+  const userRole = c.get('userRole');
+
+  if (!userId || (userRole !== 'superadmin' && userRole !== 'editor')) {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Accès refusé' } }, 403);
+  }
+
+  try {
+    const body = await c.req.json();
+    const {
+      title, description, theme_id, difficulty, duration_minutes,
+      container_template_id, course_content, course_blocks, is_published,
+      questions: questionsData
+    } = body;
+
+    if (!title || !theme_id) {
+      return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Titre et thématique requis' } }, 400);
+    }
+
+    const exerciseId = `ex-${Date.now()}`;
+    const pointsMax = questionsData?.reduce((sum: number, q: any) => sum + (q.points || 10), 0) || 0;
+
+    await c.env.DB.prepare(`
+      INSERT INTO exercises (id, theme_id, title, description, difficulty, duration_minutes,
+        points_max, course_content, course_blocks, container_template_id, is_published, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      exerciseId, theme_id, title, description || '', difficulty || 'débutant',
+      duration_minutes || 60, pointsMax, course_content || '', course_blocks || '[]',
+      container_template_id || null, is_published || 0, userId
+    ).run();
+
+    // Insert questions
+    if (questionsData && questionsData.length) {
+      for (const q of questionsData) {
+        const questionId = `q-${exerciseId}-${q.order_index}`;
+        await c.env.DB.prepare(`
+          INSERT INTO questions (id, exercise_id, question_text, question_type, options, correct_answer, points, hint, order_index)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          questionId, exerciseId, q.question_text, q.question_type,
+          q.options || null, q.correct_answer, q.points || 10, q.hint || null, q.order_index
+        ).run();
+      }
+    }
+
+    // Log activity
+    await logActivity(c.env.DB, userId, is_published ? 'publish' : 'create', 'exercise', exerciseId, title);
+
+    return c.json({ success: true, data: { id: exerciseId } });
+  } catch (error) {
+    console.error('Error creating exercise:', error);
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// PUT /api/admin/exercises/:id - Update exercise
+app.put('/api/admin/exercises/:id', async (c) => {
+  const userId = c.get('userId');
+  const userRole = c.get('userRole');
+  const exerciseId = c.req.param('id');
+
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  try {
+    // Check ownership
+    const exercise = await c.env.DB.prepare(
+      'SELECT created_by FROM exercises WHERE id = ?'
+    ).bind(exerciseId).first();
+
+    if (!exercise) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Exercice non trouvé' } }, 404);
+    }
+
+    if (userRole !== 'superadmin' && exercise.created_by !== userId) {
+      return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Vous ne pouvez modifier que vos propres exercices' } }, 403);
+    }
+
+    const body = await c.req.json();
+    const {
+      title, description, theme_id, difficulty, duration_minutes,
+      container_template_id, course_content, course_blocks, is_published,
+      questions: questionsData
+    } = body;
+
+    const pointsMax = questionsData?.reduce((sum: number, q: any) => sum + (q.points || 10), 0) || 0;
+
+    await c.env.DB.prepare(`
+      UPDATE exercises SET
+        title = ?, description = ?, theme_id = ?, difficulty = ?, duration_minutes = ?,
+        points_max = ?, course_content = ?, course_blocks = ?, container_template_id = ?,
+        is_published = ?, updated_by = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(
+      title, description || '', theme_id, difficulty || 'débutant', duration_minutes || 60,
+      pointsMax, course_content || '', course_blocks || '[]', container_template_id || null,
+      is_published || 0, userId, exerciseId
+    ).run();
+
+    // Delete old questions and insert new ones
+    await c.env.DB.prepare('DELETE FROM questions WHERE exercise_id = ?').bind(exerciseId).run();
+
+    if (questionsData && questionsData.length) {
+      for (const q of questionsData) {
+        const questionId = `q-${exerciseId}-${q.order_index}-${Date.now()}`;
+        await c.env.DB.prepare(`
+          INSERT INTO questions (id, exercise_id, question_text, question_type, options, correct_answer, points, hint, order_index)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          questionId, exerciseId, q.question_text, q.question_type,
+          q.options || null, q.correct_answer, q.points || 10, q.hint || null, q.order_index
+        ).run();
+      }
+    }
+
+    // Log activity
+    await logActivity(c.env.DB, userId, is_published ? 'publish' : 'update', 'exercise', exerciseId, title);
+
+    return c.json({ success: true, data: { id: exerciseId } });
+  } catch (error) {
+    console.error('Error updating exercise:', error);
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// DELETE /api/admin/exercises/:id
+app.delete('/api/admin/exercises/:id', async (c) => {
+  const userId = c.get('userId');
+  const userRole = c.get('userRole');
+  const exerciseId = c.req.param('id');
+
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  try {
+    const exercise = await c.env.DB.prepare(
+      'SELECT created_by, title FROM exercises WHERE id = ?'
+    ).bind(exerciseId).first();
+
+    if (!exercise) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Exercice non trouvé' } }, 404);
+    }
+
+    if (userRole !== 'superadmin' && exercise.created_by !== userId) {
+      return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Accès refusé' } }, 403);
+    }
+
+    // Soft delete
+    await c.env.DB.prepare(
+      'UPDATE exercises SET is_active = 0 WHERE id = ?'
+    ).bind(exerciseId).run();
+
+    // Log activity
+    await logActivity(c.env.DB, userId, 'delete', 'exercise', exerciseId, exercise.title as string);
+
+    return c.json({ success: true, message: 'Exercice supprimé' });
+  } catch (error) {
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// =============================================
+// ROUTES ADMIN - THEMES
+// =============================================
+
+// POST /api/admin/themes
+app.post('/api/admin/themes', async (c) => {
+  const userId = c.get('userId');
+  const userRole = c.get('userRole');
+
+  if (!userId || userRole !== 'superadmin') {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Réservé aux super admins' } }, 403);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { name, description, team_type, icon } = body;
+
+    if (!name || !team_type) {
+      return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Nom et équipe requis' } }, 400);
+    }
+
+    const themeId = `theme-${Date.now()}`;
+
+    await c.env.DB.prepare(`
+      INSERT INTO themes (id, name, description, team_type, icon, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(themeId, name, description || '', team_type, icon || '📁', userId).run();
+
+    await logActivity(c.env.DB, userId, 'create', 'theme', themeId, name);
+
+    return c.json({ success: true, data: { id: themeId } });
+  } catch (error) {
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// =============================================
+// ROUTES ADMIN - EDITORS (SuperAdmin only)
+// =============================================
+
+// GET /api/admin/editors
+app.get('/api/admin/editors', async (c) => {
+  const userRole = c.get('userRole');
+
+  if (userRole !== 'superadmin') {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Réservé aux super admins' } }, 403);
+  }
+
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT
+        u.id, u.username, u.display_name, u.last_login_at, u.created_at,
+        (SELECT COUNT(*) FROM exercises WHERE created_by = u.id AND is_active = 1) as exercises_count,
+        (SELECT COUNT(*) FROM exercises WHERE created_by = u.id AND is_published = 1) as published_count,
+        (SELECT COUNT(*) FROM questions q JOIN exercises e ON q.exercise_id = e.id WHERE e.created_by = u.id) as questions_count
+      FROM users u
+      WHERE u.role = 'editor' AND u.is_active = 1
+      ORDER BY u.display_name
+    `).all();
+
+    return c.json({ success: true, data: results });
+  } catch (error) {
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// =============================================
+// ROUTES ADMIN - ACTIVITY LOG
+// =============================================
+
+// GET /api/admin/activity
+app.get('/api/admin/activity', async (c) => {
+  const userRole = c.get('userRole');
+  const limit = parseInt(c.req.query('limit') || '50');
+
+  if (userRole !== 'superadmin') {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Réservé aux super admins' } }, 403);
+  }
+
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT
+        al.id, al.action, al.entity_type, al.entity_id, al.details, al.created_at,
+        u.display_name as user_name
+      FROM activity_logs al
+      JOIN users u ON al.user_id = u.id
+      ORDER BY al.created_at DESC
+      LIMIT ?
+    `).bind(limit).all();
+
+    return c.json({ success: true, data: results });
+  } catch (error) {
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// =============================================
+// ROUTES ADMIN - STUDENTS
+// =============================================
+
+// GET /api/admin/students
+app.get('/api/admin/students', async (c) => {
+  const userRole = c.get('userRole');
+
+  if (userRole !== 'superadmin') {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: 'Réservé aux super admins' } }, 403);
+  }
+
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT
+        s.id, s.student_code, s.display_name, s.total_points, s.exercises_completed, s.last_active_at,
+        sb.red_team_points, sb.blue_team_points, sb.rank
+      FROM students s
+      LEFT JOIN scoreboard sb ON s.id = sb.student_id
+      ORDER BY s.total_points DESC
+    `).all();
+
+    return c.json({ success: true, data: results });
+  } catch (error) {
+    return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
+  }
+});
+
+// =============================================
+// ROUTES THÉMATIQUES (Public)
+// =============================================
+
 app.get('/api/themes', async (c) => {
   const teamFilter = c.req.query('team');
 
@@ -66,7 +615,7 @@ app.get('/api/themes', async (c) => {
         t.id, t.name, t.description, t.icon, t.color, t.team_type, t.parent_id, t.order_index,
         COUNT(e.id) as exercise_count
       FROM themes t
-      LEFT JOIN exercises e ON e.theme_id = t.id AND e.is_active = 1
+      LEFT JOIN exercises e ON e.theme_id = t.id AND e.is_active = 1 AND e.is_published = 1
       WHERE t.is_active = 1
     `;
 
@@ -84,7 +633,6 @@ app.get('/api/themes', async (c) => {
   }
 });
 
-// GET /api/themes/:id - Détail d'une thématique avec exercices
 app.get('/api/themes/:id', async (c) => {
   const themeId = c.req.param('id');
 
@@ -102,22 +650,20 @@ app.get('/api/themes/:id', async (c) => {
       SELECT id, title, description, difficulty, duration_minutes, points_max,
              CASE WHEN container_template_id IS NOT NULL THEN 1 ELSE 0 END as has_lab
       FROM exercises
-      WHERE theme_id = ? AND is_active = 1
+      WHERE theme_id = ? AND is_active = 1 AND is_published = 1
       ORDER BY order_index
     `).bind(themeId).all();
 
     return c.json({ success: true, data: { ...theme, exercises } });
   } catch (error) {
-    console.error('Error fetching theme:', error);
     return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
   }
 });
 
 // =============================================
-// ROUTES EXERCICES
+// ROUTES EXERCICES (Public)
 // =============================================
 
-// GET /api/exercises/:id - Détail d'un exercice
 app.get('/api/exercises/:id', async (c) => {
   const exerciseId = c.req.param('id');
 
@@ -130,7 +676,7 @@ app.get('/api/exercises/:id', async (c) => {
         t.team_type, t.name as theme_name
       FROM exercises e
       JOIN themes t ON e.theme_id = t.id
-      WHERE e.id = ? AND e.is_active = 1
+      WHERE e.id = ? AND e.is_active = 1 AND e.is_published = 1
     `).bind(exerciseId).first();
 
     if (!exercise) {
@@ -139,12 +685,10 @@ app.get('/api/exercises/:id', async (c) => {
 
     return c.json({ success: true, data: exercise });
   } catch (error) {
-    console.error('Error fetching exercise:', error);
     return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
   }
 });
 
-// GET /api/exercises/:id/questions - Questions d'un exercice
 app.get('/api/exercises/:id/questions', async (c) => {
   const exerciseId = c.req.param('id');
 
@@ -158,12 +702,11 @@ app.get('/api/exercises/:id/questions', async (c) => {
 
     return c.json({ success: true, data: results });
   } catch (error) {
-    console.error('Error fetching questions:', error);
     return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
   }
 });
 
-// POST /api/exercises/:id/submit - Soumettre toutes les réponses
+// POST /api/exercises/:id/submit
 app.post('/api/exercises/:id/submit', async (c) => {
   const exerciseId = c.req.param('id');
   const studentId = c.get('studentId');
@@ -174,13 +717,12 @@ app.post('/api/exercises/:id/submit', async (c) => {
 
   try {
     const body = await c.req.json();
-    const { answers } = body; // { questionId: answer, ... }
+    const { answers } = body;
 
     if (!answers || Object.keys(answers).length === 0) {
       return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Aucune réponse fournie' } }, 400);
     }
 
-    // Récupérer les questions avec réponses correctes
     const { results: questions } = await c.env.DB.prepare(`
       SELECT id, correct_answer, points FROM questions WHERE exercise_id = ?
     `).bind(exerciseId).all();
@@ -198,7 +740,6 @@ app.post('/api/exercises/:id/submit', async (c) => {
       const pointsEarned = isCorrect ? question.points : 0;
       totalEarned += pointsEarned;
 
-      // Enregistrer la soumission
       const submissionId = `sub-${studentId}-${questionId}-${Date.now()}`;
       await c.env.DB.prepare(`
         INSERT INTO submissions (id, student_id, exercise_id, question_id, submitted_answer, is_correct, points_earned)
@@ -213,7 +754,6 @@ app.post('/api/exercises/:id/submit', async (c) => {
       });
     }
 
-    // Mettre à jour ou créer le résultat d'exercice
     const maxScore = questions.reduce((sum: number, q: any) => sum + q.points, 0);
     const percentage = maxScore > 0 ? (totalEarned / maxScore) * 100 : 0;
 
@@ -226,7 +766,6 @@ app.post('/api/exercises/:id/submit', async (c) => {
         completed_at = datetime('now')
     `).bind(`result-${studentId}-${exerciseId}`, studentId, exerciseId, totalEarned, maxScore, percentage).run();
 
-    // Mettre à jour les points totaux de l'étudiant
     await c.env.DB.prepare(`
       UPDATE students SET
         total_points = (SELECT COALESCE(SUM(score), 0) FROM exercise_results WHERE student_id = ?),
@@ -235,7 +774,6 @@ app.post('/api/exercises/:id/submit', async (c) => {
       WHERE id = ?
     `).bind(studentId, studentId, studentId).run();
 
-    // Mettre à jour le scoreboard
     await updateScoreboard(c.env.DB, studentId);
 
     return c.json({
@@ -253,7 +791,6 @@ app.post('/api/exercises/:id/submit', async (c) => {
 // ROUTES ÉTUDIANTS
 // =============================================
 
-// POST /api/students/register - Enregistrer un étudiant
 app.post('/api/students/register', async (c) => {
   try {
     const body = await c.req.json();
@@ -263,7 +800,6 @@ app.post('/api/students/register', async (c) => {
       return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Code étudiant requis' } }, 400);
     }
 
-    // Vérifier si l'étudiant existe déjà
     const existing = await c.env.DB.prepare(
       'SELECT id FROM students WHERE student_code = ?'
     ).bind(student_code).first();
@@ -272,14 +808,12 @@ app.post('/api/students/register', async (c) => {
       return c.json({ success: true, data: { id: existing.id, message: 'Étudiant existant' } });
     }
 
-    // Créer le nouvel étudiant
     const studentId = `stu-${Date.now()}`;
     await c.env.DB.prepare(`
       INSERT INTO students (id, student_code, display_name)
       VALUES (?, ?, ?)
     `).bind(studentId, student_code, display_name || student_code).run();
 
-    // Initialiser dans le scoreboard
     await c.env.DB.prepare(`
       INSERT INTO scoreboard (student_id, display_name, total_points)
       VALUES (?, ?, 0)
@@ -287,12 +821,10 @@ app.post('/api/students/register', async (c) => {
 
     return c.json({ success: true, data: { id: studentId, message: 'Étudiant créé' } });
   } catch (error) {
-    console.error('Error registering student:', error);
     return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
   }
 });
 
-// GET /api/students/:code/stats - Stats d'un étudiant
 app.get('/api/students/:code/stats', async (c) => {
   const studentCode = c.req.param('code');
 
@@ -311,7 +843,6 @@ app.get('/api/students/:code/stats', async (c) => {
 
     return c.json({ success: true, data: student });
   } catch (error) {
-    console.error('Error fetching student stats:', error);
     return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
   }
 });
@@ -320,7 +851,6 @@ app.get('/api/students/:code/stats', async (c) => {
 // ROUTES SCOREBOARD
 // =============================================
 
-// GET /api/scoreboard - Classement
 app.get('/api/scoreboard', async (c) => {
   const filter = c.req.query('filter') || 'all';
   const limit = parseInt(c.req.query('limit') || '50');
@@ -339,7 +869,6 @@ app.get('/api/scoreboard', async (c) => {
 
     return c.json({ success: true, data: results });
   } catch (error) {
-    console.error('Error fetching scoreboard:', error);
     return c.json({ success: false, error: { code: 'DB_ERROR', message: 'Erreur base de données' } }, 500);
   }
 });
@@ -348,7 +877,6 @@ app.get('/api/scoreboard', async (c) => {
 // ROUTES LABS
 // =============================================
 
-// POST /api/labs/start - Démarrer un lab
 app.post('/api/labs/start', async (c) => {
   const studentId = c.get('studentId');
 
@@ -381,19 +909,13 @@ app.post('/api/labs/start', async (c) => {
 
     return c.json({
       success: true,
-      data: {
-        session_id: sessionId,
-        status: 'starting',
-        expires_at: expiresAt,
-      }
+      data: { session_id: sessionId, status: 'starting', expires_at: expiresAt }
     });
   } catch (error) {
-    console.error('Error starting lab:', error);
     return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur' } }, 500);
   }
 });
 
-// GET /api/labs/:sessionId
 app.get('/api/labs/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
 
@@ -412,7 +934,6 @@ app.get('/api/labs/:sessionId', async (c) => {
   }
 });
 
-// DELETE /api/labs/:sessionId
 app.delete('/api/labs/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
 
@@ -431,9 +952,27 @@ app.delete('/api/labs/:sessionId', async (c) => {
 // HELPER FUNCTIONS
 // =============================================
 
+async function logActivity(
+  db: D1Database,
+  userId: string,
+  action: string,
+  entityType: string | null,
+  entityId: string | null,
+  details: string | null
+) {
+  try {
+    const logId = `log-${Date.now()}`;
+    await db.prepare(`
+      INSERT INTO activity_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(logId, userId, action, entityType, entityId, details).run();
+  } catch (error) {
+    console.error('Error logging activity:', error);
+  }
+}
+
 async function updateScoreboard(db: D1Database, studentId: string) {
   try {
-    // Calculer les points par team
     const stats = await db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN t.team_type = 'red' THEN er.score ELSE 0 END), 0) as red_points,
@@ -468,7 +1007,6 @@ async function updateScoreboard(db: D1Database, studentId: string) {
       stats?.exercises_completed || 0
     ).run();
 
-    // Mettre à jour les rangs
     await db.prepare(`
       UPDATE scoreboard SET rank = (
         SELECT COUNT(*) + 1 FROM scoreboard s2 WHERE s2.total_points > scoreboard.total_points

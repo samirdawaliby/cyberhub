@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberHub Admin - Gestion des exercices</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+</head>
+<body class="admin-body">
+    <div class="admin-app">
+        <!-- Login Modal -->
+        <div class="login-modal" id="login-modal">
+            <div class="login-card">
+                <div class="login-logo">
+                    <span class="logo-icon">🛡️</span>
+                    <span class="logo-text">CyberHub</span>
+                </div>
+                <h2>Connexion Admin</h2>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label>Nom d'utilisateur</label>
+                        <input type="text" id="login-username" placeholder="Ex: mehdi.morhaoui" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mot de passe</label>
+                        <input type="password" id="login-password" placeholder="Votre mot de passe" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Se connecter</button>
+                    <p class="login-error" id="login-error"></p>
+                </form>
+            </div>
+        </div>
+
+        <!-- Admin Sidebar -->
+        <aside class="admin-sidebar" id="admin-sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🛡️</span>
+                    <span class="logo-text">CyberHub</span>
+                </div>
+                <span class="admin-badge" id="user-role-badge">ADMIN</span>
+            </div>
+
+            <nav class="admin-nav">
+                <div class="nav-item active" data-view="dashboard" onclick="showAdminView('dashboard')">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </div>
+                <div class="nav-item" data-view="exercises" onclick="showAdminView('exercises')">
+                    <span class="nav-icon">📚</span>
+                    <span>Exercices</span>
+                </div>
+                <div class="nav-item" data-view="themes" onclick="showAdminView('themes')">
+                    <span class="nav-icon">🎯</span>
+                    <span>Thématiques</span>
+                </div>
+                <div class="nav-item superadmin-only" data-view="editors" onclick="showAdminView('editors')">
+                    <span class="nav-icon">👥</span>
+                    <span>Éditeurs</span>
+                </div>
+                <div class="nav-item superadmin-only" data-view="activity" onclick="showAdminView('activity')">
+                    <span class="nav-icon">📋</span>
+                    <span>Activité</span>
+                </div>
+                <div class="nav-item superadmin-only" data-view="students" onclick="showAdminView('students')">
+                    <span class="nav-icon">🎓</span>
+                    <span>Étudiants</span>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar" id="user-avatar">👤</div>
+                    <div class="user-details">
+                        <span class="user-name" id="user-name">Utilisateur</span>
+                        <span class="user-role" id="user-role">Éditeur</span>
+                    </div>
+                </div>
+                <button class="btn-logout" onclick="logout()">
+                    <span>🚪</span> Déconnexion
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="admin-content" id="admin-content">
+
+            <!-- Dashboard View -->
+            <div class="admin-view active" id="view-dashboard">
+                <div class="admin-header">
+                    <h1>📊 Dashboard</h1>
+                    <p>Bienvenue sur l'interface d'administration CyberHub</p>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📚</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-exercises">0</span>
+                            <span class="stat-label">Exercices</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🎯</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-themes">0</span>
+                            <span class="stat-label">Thématiques</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">❓</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-questions">0</span>
+                            <span class="stat-label">Questions</span>
+                        </div>
+                    </div>
+                    <div class="stat-card superadmin-only">
+                        <div class="stat-icon">🎓</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-students">0</span>
+                            <span class="stat-label">Étudiants</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-sections">
+                    <div class="dashboard-section">
+                        <h3>🕐 Mes derniers exercices</h3>
+                        <div class="recent-list" id="my-recent-exercises"></div>
+                    </div>
+                    <div class="dashboard-section superadmin-only">
+                        <h3>📋 Activité récente des éditeurs</h3>
+                        <div class="activity-list" id="recent-activity"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Exercises View -->
+            <div class="admin-view" id="view-exercises">
+                <div class="admin-header">
+                    <div>
+                        <h1>📚 Exercices</h1>
+                        <p>Gérez vos exercices de formation</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="openExerciseEditor()">
+                        <span>➕</span> Nouvel exercice
+                    </button>
+                </div>
+
+                <div class="filters-bar">
+                    <select id="filter-theme" onchange="filterExercises()">
+                        <option value="">Toutes les thématiques</option>
+                    </select>
+                    <select id="filter-team" onchange="filterExercises()">
+                        <option value="">Toutes les équipes</option>
+                        <option value="red">🔴 Red Team</option>
+                        <option value="blue">🔵 Blue Team</option>
+                    </select>
+                    <select id="filter-status" onchange="filterExercises()">
+                        <option value="">Tous les statuts</option>
+                        <option value="published">✅ Publié</option>
+                        <option value="draft">📝 Brouillon</option>
+                    </select>
+                </div>
+
+                <div class="exercises-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Titre</th>
+                                <th>Thématique</th>
+                                <th>Difficulté</th>
+                                <th>Questions</th>
+                                <th>Statut</th>
+                                <th>Créé par</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="exercises-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Themes View -->
+            <div class="admin-view" id="view-themes">
+                <div class="admin-header">
+                    <div>
+                        <h1>🎯 Thématiques</h1>
+                        <p>Gérez les catégories d'exercices</p>
+                    </div>
+                    <button class="btn btn-primary superadmin-only" onclick="openThemeModal()">
+                        <span>➕</span> Nouvelle thématique
+                    </button>
+                </div>
+
+                <div class="themes-admin-grid" id="themes-admin-grid"></div>
+            </div>
+
+            <!-- Editors View (SuperAdmin only) -->
+            <div class="admin-view" id="view-editors">
+                <div class="admin-header">
+                    <div>
+                        <h1>👥 Éditeurs</h1>
+                        <p>Surveillez l'activité de votre équipe</p>
+                    </div>
+                </div>
+
+                <div class="editors-grid" id="editors-grid"></div>
+            </div>
+
+            <!-- Activity View (SuperAdmin only) -->
+            <div class="admin-view" id="view-activity">
+                <div class="admin-header">
+                    <div>
+                        <h1>📋 Journal d'activité</h1>
+                        <p>Historique des actions des éditeurs</p>
+                    </div>
+                </div>
+
+                <div class="activity-filters">
+                    <select id="activity-filter-user">
+                        <option value="">Tous les éditeurs</option>
+                    </select>
+                    <select id="activity-filter-action">
+                        <option value="">Toutes les actions</option>
+                        <option value="create">Création</option>
+                        <option value="update">Modification</option>
+                        <option value="delete">Suppression</option>
+                        <option value="publish">Publication</option>
+                    </select>
+                </div>
+
+                <div class="activity-log-container" id="activity-log-container"></div>
+            </div>
+
+            <!-- Students View (SuperAdmin only) -->
+            <div class="admin-view" id="view-students">
+                <div class="admin-header">
+                    <div>
+                        <h1>🎓 Étudiants</h1>
+                        <p>Suivez les progrès des étudiants</p>
+                    </div>
+                </div>
+
+                <div class="students-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Nom</th>
+                                <th>Points Total</th>
+                                <th>🔴 Red</th>
+                                <th>🔵 Blue</th>
+                                <th>Exercices</th>
+                                <th>Dernière activité</th>
+                            </tr>
+                        </thead>
+                        <tbody id="students-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Exercise Editor View -->
+            <div class="admin-view" id="view-exercise-editor">
+                <div class="admin-header">
+                    <button class="btn-back" onclick="closeExerciseEditor()">← Retour</button>
+                    <div>
+                        <h1 id="editor-title">📝 Nouvel exercice</h1>
+                    </div>
+                    <div class="editor-actions">
+                        <button class="btn btn-secondary" onclick="saveExerciseDraft()">
+                            💾 Sauvegarder brouillon
+                        </button>
+                        <button class="btn btn-primary" onclick="publishExercise()">
+                            ✅ Publier
+                        </button>
+                    </div>
+                </div>
+
+                <div class="editor-container">
+                    <!-- Left Panel: Settings -->
+                    <div class="editor-settings">
+                        <div class="settings-section">
+                            <h3>Informations générales</h3>
+
+                            <div class="form-group">
+                                <label>Titre de l'exercice *</label>
+                                <input type="text" id="exercise-title-input" placeholder="Ex: Introduction à Nmap">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Description courte</label>
+                                <textarea id="exercise-description-input" rows="3" placeholder="Description affichée dans la liste"></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Thématique *</label>
+                                <select id="exercise-theme-select">
+                                    <option value="">Sélectionner...</option>
+                                </select>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Difficulté</label>
+                                    <select id="exercise-difficulty-select">
+                                        <option value="débutant">Débutant</option>
+                                        <option value="intermédiaire">Intermédiaire</option>
+                                        <option value="avancé">Avancé</option>
+                                        <option value="expert">Expert</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Durée (min)</label>
+                                    <input type="number" id="exercise-duration-input" value="60" min="10" max="480">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Lab container (optionnel)</label>
+                                <select id="exercise-container-select">
+                                    <option value="">Aucun lab</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Center Panel: Content Editor -->
+                    <div class="editor-content">
+                        <div class="editor-tabs">
+                            <button class="editor-tab active" data-tab="content" onclick="switchEditorTab('content')">
+                                📖 Contenu du cours
+                            </button>
+                            <button class="editor-tab" data-tab="questions" onclick="switchEditorTab('questions')">
+                                ❓ Questions (<span id="questions-count">0</span>)
+                            </button>
+                            <button class="editor-tab" data-tab="preview" onclick="switchEditorTab('preview')">
+                                👁️ Aperçu
+                            </button>
+                        </div>
+
+                        <!-- Content Tab -->
+                        <div class="editor-tab-content active" id="tab-content-editor">
+                            <div class="blocks-toolbar">
+                                <span class="toolbar-label">Ajouter un bloc :</span>
+                                <button class="block-btn" onclick="addBlock('heading')" title="Titre">
+                                    <span>📌</span> Titre
+                                </button>
+                                <button class="block-btn" onclick="addBlock('paragraph')" title="Paragraphe">
+                                    <span>📝</span> Texte
+                                </button>
+                                <button class="block-btn" onclick="addBlock('code')" title="Code">
+                                    <span>💻</span> Code
+                                </button>
+                                <button class="block-btn" onclick="addBlock('image')" title="Image">
+                                    <span>🖼️</span> Image
+                                </button>
+                                <button class="block-btn" onclick="addBlock('alert')" title="Alerte">
+                                    <span>⚠️</span> Alerte
+                                </button>
+                                <button class="block-btn" onclick="addBlock('list')" title="Liste">
+                                    <span>📋</span> Liste
+                                </button>
+                                <button class="block-btn" onclick="addBlock('terminal')" title="Terminal">
+                                    <span>🖥️</span> Terminal
+                                </button>
+                                <button class="block-btn" onclick="addBlock('divider')" title="Séparateur">
+                                    <span>➖</span> Séparateur
+                                </button>
+                                <button class="block-btn" onclick="addBlock('collapsible')" title="Accordéon">
+                                    <span>📂</span> Accordéon
+                                </button>
+                            </div>
+
+                            <div class="blocks-container" id="blocks-container">
+                                <div class="empty-blocks-message">
+                                    <p>Commencez à créer votre exercice en ajoutant des blocs ci-dessus</p>
+                                    <p class="hint">Vous pouvez réorganiser les blocs par glisser-déposer</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Questions Tab -->
+                        <div class="editor-tab-content" id="tab-questions-editor">
+                            <div class="questions-toolbar">
+                                <span class="toolbar-label">Ajouter une question :</span>
+                                <button class="block-btn" onclick="addQuestion('qcm')" title="QCM">
+                                    <span>🔘</span> QCM
+                                </button>
+                                <button class="block-btn" onclick="addQuestion('qcm_multiple')" title="QCM Multiple">
+                                    <span>☑️</span> QCM Multiple
+                                </button>
+                                <button class="block-btn" onclick="addQuestion('text')" title="Texte libre">
+                                    <span>✏️</span> Texte
+                                </button>
+                                <button class="block-btn" onclick="addQuestion('flag')" title="Flag CTF">
+                                    <span>🚩</span> Flag
+                                </button>
+                                <button class="block-btn" onclick="addQuestion('code')" title="Code">
+                                    <span>💻</span> Code
+                                </button>
+                                <button class="block-btn" onclick="addQuestion('number')" title="Nombre">
+                                    <span>🔢</span> Nombre
+                                </button>
+                            </div>
+
+                            <div class="questions-container" id="questions-editor-container">
+                                <div class="empty-questions-message">
+                                    <p>Ajoutez des questions pour évaluer les étudiants</p>
+                                    <p class="hint">Les questions apparaîtront dans l'onglet "Questions" de l'exercice</p>
+                                </div>
+                            </div>
+
+                            <div class="questions-summary">
+                                <span>Total: <strong id="total-points">0</strong> points</span>
+                            </div>
+                        </div>
+
+                        <!-- Preview Tab -->
+                        <div class="editor-tab-content" id="tab-preview-editor">
+                            <div class="preview-container">
+                                <div class="preview-header">
+                                    <h2 id="preview-title">Titre de l'exercice</h2>
+                                    <div class="preview-meta">
+                                        <span class="badge" id="preview-difficulty">Débutant</span>
+                                        <span class="badge-info" id="preview-duration">60 min</span>
+                                        <span class="badge-info" id="preview-points">0 points</span>
+                                    </div>
+                                </div>
+                                <div class="preview-content markdown-content" id="preview-content"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Block Editor Modal -->
+    <div class="modal" id="block-modal">
+        <div class="modal-overlay" onclick="closeBlockModal()"></div>
+        <div class="modal-content" id="block-modal-content">
+            <!-- Dynamic content -->
+        </div>
+    </div>
+
+    <!-- Question Editor Modal -->
+    <div class="modal" id="question-modal">
+        <div class="modal-overlay" onclick="closeQuestionModal()"></div>
+        <div class="modal-content modal-large" id="question-modal-content">
+            <!-- Dynamic content -->
+        </div>
+    </div>
+
+    <!-- Theme Modal -->
+    <div class="modal" id="theme-modal">
+        <div class="modal-overlay" onclick="closeThemeModal()"></div>
+        <div class="modal-content">
+            <h2>Nouvelle thématique</h2>
+            <form id="theme-form">
+                <div class="form-group">
+                    <label>Nom *</label>
+                    <input type="text" id="theme-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="theme-description" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Équipe *</label>
+                    <select id="theme-team" required>
+                        <option value="red">🔴 Red Team</option>
+                        <option value="blue">🔵 Blue Team</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Icône (emoji)</label>
+                    <input type="text" id="theme-icon" placeholder="Ex: 🔍">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeThemeModal()">Annuler</button>
+                    <button type="submit" class="btn btn-primary">Créer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/admin.js"></script>
+    <script src="js/editor.js"></script>
+</body>
+</html>
