@@ -382,6 +382,35 @@
 
                         <!-- Content Tab -->
                         <div class="editor-tab-content active" id="tab-content-editor">
+                            <!-- AI Assistant Banner -->
+                            <div class="ai-assistant-banner" id="ai-assistant-banner">
+                                <div class="ai-banner-content">
+                                    <div class="ai-banner-icon">🤖</div>
+                                    <div class="ai-banner-text">
+                                        <strong>Assistant IA</strong>
+                                        <p>Importez un fichier PDF ou TXT et laissez l'IA créer votre exercice automatiquement</p>
+                                    </div>
+                                </div>
+                                <div class="ai-banner-actions">
+                                    <label class="btn btn-ai" for="ai-file-upload">
+                                        <span>📄</span> Importer un fichier
+                                    </label>
+                                    <input type="file" id="ai-file-upload" accept=".txt,.pdf,.md" style="display: none;" onchange="handleAIFileUpload(event)">
+                                </div>
+                            </div>
+
+                            <!-- AI Processing Status -->
+                            <div class="ai-processing hidden" id="ai-processing">
+                                <div class="ai-processing-content">
+                                    <div class="ai-spinner"></div>
+                                    <div class="ai-processing-text">
+                                        <strong>Analyse en cours...</strong>
+                                        <p id="ai-processing-status">L'IA analyse votre document</p>
+                                    </div>
+                                </div>
+                                <button class="btn btn-secondary btn-small" onclick="cancelAIProcessing()">Annuler</button>
+                            </div>
+
                             <div class="blocks-toolbar">
                                 <span class="toolbar-label">Ajouter un bloc :</span>
                                 <button class="block-btn" onclick="addBlock('heading')" title="Titre">

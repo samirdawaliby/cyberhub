@@ -949,6 +949,226 @@ app.delete('/api/labs/:sessionId', async (c) => {
 });
 
 // =============================================
+// AI ASSISTANT - EXERCISE GENERATION
+// =============================================
+
+// POST /api/admin/ai/extract-pdf - Extract text from PDF
+app.post('/api/admin/ai/extract-pdf', async (c) => {
+  const userId = c.get('userId');
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { pdf_base64, filename } = body;
+
+    if (!pdf_base64) {
+      return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'PDF requis' } }, 400);
+    }
+
+    // For now, return a message that PDF parsing requires additional setup
+    // In production, you would use a PDF parsing service or library
+    return c.json({
+      success: false,
+      error: {
+        code: 'PDF_NOT_SUPPORTED',
+        message: 'L\'extraction PDF n\'est pas encore disponible. Veuillez utiliser un fichier TXT ou MD.'
+      }
+    }, 400);
+
+  } catch (error) {
+    console.error('PDF extraction error:', error);
+    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur' } }, 500);
+  }
+});
+
+// POST /api/admin/ai/generate-exercise - Generate exercise from text content
+app.post('/api/admin/ai/generate-exercise', async (c) => {
+  const userId = c.get('userId');
+  if (!userId) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Non authentifié' } }, 401);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { content, filename } = body;
+
+    if (!content || content.trim().length < 50) {
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'Contenu trop court (minimum 50 caractères)' }
+      }, 400);
+    }
+
+    // Parse the text content and generate exercise structure
+    const exerciseData = parseContentToExercise(content, filename);
+
+    return c.json({ success: true, data: exerciseData });
+
+  } catch (error) {
+    console.error('AI generation error:', error);
+    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur' } }, 500);
+  }
+});
+
+// Helper function to parse text content into exercise structure
+function parseContentToExercise(content: string, filename: string) {
+  const lines = content.split('\n').filter(line => line.trim());
+  const blocks: any[] = [];
+  const questions: any[] = [];
+
+  // Extract title from filename or first line
+  let title = filename?.replace(/\.(txt|md|pdf)$/i, '').replace(/[-_]/g, ' ') || 'Nouvel exercice';
+  if (lines[0] && lines[0].length < 100 && !lines[0].includes('.')) {
+    title = lines[0].replace(/^#+\s*/, '').trim();
+  }
+
+  // Detect difficulty based on keywords
+  let difficulty = 'débutant';
+  const contentLower = content.toLowerCase();
+  if (contentLower.includes('avancé') || contentLower.includes('expert') || contentLower.includes('advanced')) {
+    difficulty = 'avancé';
+  } else if (contentLower.includes('intermédiaire') || contentLower.includes('intermediate')) {
+    difficulty = 'intermédiaire';
+  }
+
+  // Estimate duration based on content length
+  const wordCount = content.split(/\s+/).length;
+  const duration_minutes = Math.min(Math.max(Math.round(wordCount / 100) * 15, 30), 180);
+
+  // Parse content into blocks
+  let currentBlockContent = '';
+  let currentBlockType = 'paragraph';
+  let inCodeBlock = false;
+  let codeLanguage = 'bash';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+
+    // Skip title line
+    if (i === 0 && trimmedLine === title) continue;
+
+    // Detect code blocks
+    if (trimmedLine.startsWith('```')) {
+      if (!inCodeBlock) {
+        // Start code block
+        if (currentBlockContent.trim()) {
+          blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
+          currentBlockContent = '';
+        }
+        inCodeBlock = true;
+        codeLanguage = trimmedLine.replace('```', '').trim() || 'bash';
+        currentBlockType = 'code';
+      } else {
+        // End code block
+        blocks.push({ type: 'code', language: codeLanguage, content: currentBlockContent.trim() });
+        currentBlockContent = '';
+        inCodeBlock = false;
+        currentBlockType = 'paragraph';
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      currentBlockContent += (currentBlockContent ? '\n' : '') + line;
+      continue;
+    }
+
+    // Detect headings
+    if (trimmedLine.startsWith('#')) {
+      if (currentBlockContent.trim()) {
+        blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
+        currentBlockContent = '';
+      }
+      const level = trimmedLine.match(/^#+/)?.[0].length || 2;
+      blocks.push({
+        type: 'heading',
+        level: `h${Math.min(level, 3)}`,
+        content: trimmedLine.replace(/^#+\s*/, '')
+      });
+      continue;
+    }
+
+    // Detect alerts/notes
+    if (trimmedLine.startsWith('>') || trimmedLine.toLowerCase().startsWith('note:') ||
+        trimmedLine.toLowerCase().startsWith('attention:') || trimmedLine.toLowerCase().startsWith('important:')) {
+      if (currentBlockContent.trim()) {
+        blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
+        currentBlockContent = '';
+      }
+      let alertType = 'info';
+      if (trimmedLine.toLowerCase().includes('attention') || trimmedLine.toLowerCase().includes('warning')) {
+        alertType = 'warning';
+      } else if (trimmedLine.toLowerCase().includes('danger') || trimmedLine.toLowerCase().includes('error')) {
+        alertType = 'danger';
+      } else if (trimmedLine.toLowerCase().includes('astuce') || trimmedLine.toLowerCase().includes('tip')) {
+        alertType = 'tip';
+      }
+      blocks.push({
+        type: 'alert',
+        alertType,
+        content: trimmedLine.replace(/^>\s*/, '').replace(/^(note|attention|important|danger|astuce|tip):\s*/i, '')
+      });
+      continue;
+    }
+
+    // Detect questions (lines ending with ?)
+    if (trimmedLine.endsWith('?') && trimmedLine.length > 20) {
+      // This might be a question for the exercise
+      questions.push({
+        type: 'text',
+        question_text: trimmedLine,
+        points: 10,
+        correct_answer: '',
+        hint: ''
+      });
+    }
+
+    // Detect terminal commands
+    if (trimmedLine.startsWith('$') || trimmedLine.startsWith('#') && trimmedLine.includes(' ')) {
+      if (currentBlockContent.trim()) {
+        blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
+        currentBlockContent = '';
+      }
+      blocks.push({
+        type: 'terminal',
+        title: 'Terminal',
+        content: trimmedLine
+      });
+      continue;
+    }
+
+    // Regular paragraph content
+    if (trimmedLine) {
+      currentBlockContent += (currentBlockContent ? '\n' : '') + trimmedLine;
+    } else if (currentBlockContent.trim()) {
+      blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
+      currentBlockContent = '';
+    }
+  }
+
+  // Don't forget last block
+  if (currentBlockContent.trim()) {
+    blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
+  }
+
+  // Generate description from first paragraph
+  const firstParagraph = blocks.find(b => b.type === 'paragraph');
+  const description = firstParagraph?.content?.substring(0, 200) || '';
+
+  return {
+    title,
+    description,
+    difficulty,
+    duration_minutes,
+    blocks,
+    questions
+  };
+}
+
+// =============================================
 // HELPER FUNCTIONS
 // =============================================
 

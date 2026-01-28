@@ -710,6 +710,117 @@ body.is-superadmin .superadmin-only {
 }
 
 /* =============================================
+   AI ASSISTANT BANNER
+   ============================================= */
+
+.ai-assistant-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(37, 99, 235, 0.15) 100%);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
+}
+
+.ai-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.ai-banner-icon {
+    font-size: 32px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+.ai-banner-text strong {
+    display: block;
+    font-size: 15px;
+    color: var(--success);
+    margin-bottom: 4px;
+}
+
+.ai-banner-text p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.btn-ai {
+    background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
+    color: white;
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all var(--transition-base);
+    border: none;
+}
+
+.btn-ai:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+/* AI Processing State */
+.ai-processing {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 16px;
+}
+
+.ai-processing.hidden {
+    display: none;
+}
+
+.ai-processing-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.ai-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--success);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.ai-processing-text strong {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.ai-processing-text p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* =============================================
    EDITOR CONTENT
    ============================================= */
 

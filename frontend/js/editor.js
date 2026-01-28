@@ -885,3 +885,185 @@ function generateMarkdownContent() {
 function previewExercise(exerciseId) {
     window.open(`index.html?exercise=${exerciseId}`, '_blank');
 }
+
+// =============================================
+// AI ASSISTANT - EXERCISE GENERATION
+// =============================================
+
+let aiProcessingController = null;
+
+async function handleAIFileUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const allowedTypes = ['text/plain', 'application/pdf', 'text/markdown'];
+    const allowedExtensions = ['.txt', '.pdf', '.md'];
+    const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+
+    if (!allowedExtensions.includes(fileExtension)) {
+        alert('Format non supporté. Veuillez utiliser un fichier TXT, PDF ou MD.');
+        event.target.value = '';
+        return;
+    }
+
+    // Show processing state
+    document.getElementById('ai-assistant-banner').classList.add('hidden');
+    document.getElementById('ai-processing').classList.remove('hidden');
+
+    try {
+        let textContent = '';
+
+        if (fileExtension === '.pdf') {
+            // For PDF, we need to send to server for parsing
+            document.getElementById('ai-processing-status').textContent = 'Extraction du contenu PDF...';
+            textContent = await extractPDFContent(file);
+        } else {
+            // For text files, read directly
+            document.getElementById('ai-processing-status').textContent = 'Lecture du fichier...';
+            textContent = await file.text();
+        }
+
+        if (!textContent || textContent.trim().length < 50) {
+            throw new Error('Le fichier semble vide ou trop court');
+        }
+
+        // Send to AI for processing
+        document.getElementById('ai-processing-status').textContent = 'L\'IA analyse votre document...';
+        const exerciseData = await generateExerciseWithAI(textContent, file.name);
+
+        if (exerciseData) {
+            // Populate the editor with AI-generated content
+            populateEditorWithAIContent(exerciseData);
+            showToast('Exercice généré avec succès ! Vérifiez et ajustez le contenu.');
+        }
+
+    } catch (error) {
+        console.error('AI processing error:', error);
+        alert('Erreur lors du traitement: ' + (error.message || 'Erreur inconnue'));
+    } finally {
+        // Reset UI
+        document.getElementById('ai-assistant-banner').classList.remove('hidden');
+        document.getElementById('ai-processing').classList.add('hidden');
+        event.target.value = '';
+    }
+}
+
+async function extractPDFContent(file) {
+    // Convert file to base64 and send to server for PDF parsing
+    const base64 = await fileToBase64(file);
+
+    const token = localStorage.getItem('admin_token');
+    const response = await fetch(`${API_BASE}/api/admin/ai/extract-pdf`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ pdf_base64: base64, filename: file.name })
+    });
+
+    const data = await response.json();
+    if (!data.success) {
+        throw new Error(data.error?.message || 'Erreur d\'extraction PDF');
+    }
+
+    return data.data.text;
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            const base64 = reader.result.split(',')[1];
+            resolve(base64);
+        };
+        reader.onerror = error => reject(error);
+    });
+}
+
+async function generateExerciseWithAI(textContent, filename) {
+    const token = localStorage.getItem('admin_token');
+
+    aiProcessingController = new AbortController();
+
+    const response = await fetch(`${API_BASE}/api/admin/ai/generate-exercise`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            content: textContent,
+            filename: filename
+        }),
+        signal: aiProcessingController.signal
+    });
+
+    const data = await response.json();
+    if (!data.success) {
+        throw new Error(data.error?.message || 'Erreur de génération');
+    }
+
+    return data.data;
+}
+
+function cancelAIProcessing() {
+    if (aiProcessingController) {
+        aiProcessingController.abort();
+        aiProcessingController = null;
+    }
+
+    document.getElementById('ai-assistant-banner').classList.remove('hidden');
+    document.getElementById('ai-processing').classList.add('hidden');
+    document.getElementById('ai-file-upload').value = '';
+}
+
+function populateEditorWithAIContent(data) {
+    // Clear existing content
+    contentBlocks = [];
+    questions = [];
+    blockIdCounter = 0;
+    questionIdCounter = 0;
+
+    document.getElementById('blocks-container').innerHTML = '';
+    document.getElementById('questions-editor-container').innerHTML = '';
+
+    // Fill form fields
+    if (data.title) {
+        document.getElementById('exercise-title-input').value = data.title;
+    }
+    if (data.description) {
+        document.getElementById('exercise-description-input').value = data.description;
+    }
+    if (data.difficulty) {
+        document.getElementById('exercise-difficulty-select').value = data.difficulty;
+    }
+    if (data.duration_minutes) {
+        document.getElementById('exercise-duration-input').value = data.duration_minutes;
+    }
+
+    // Add content blocks
+    if (data.blocks && data.blocks.length > 0) {
+        data.blocks.forEach(block => {
+            addBlock(block.type, block);
+        });
+    }
+
+    // Add questions
+    if (data.questions && data.questions.length > 0) {
+        data.questions.forEach(q => {
+            addQuestion(q.type || 'text', {
+                text: q.question_text || q.text,
+                points: q.points || 10,
+                hint: q.hint || '',
+                options: q.options,
+                correctAnswer: q.correct_answer || q.correctAnswer
+            });
+        });
+    }
+
+    updateQuestionsCount();
+    updateTotalPoints();
+    initSortable();
+}

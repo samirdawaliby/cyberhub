@@ -135,15 +135,16 @@ function handleHashNavigation() {
 // =============================================
 
 function showAdminView(viewName) {
-    // Update URL hash without triggering hashchange
-    if (window.location.hash !== `#${viewName}`) {
+    // Don't update URL for exercise-editor (it's a sub-view)
+    if (viewName !== 'exercise-editor' && window.location.hash !== `#${viewName}`) {
         history.pushState(null, '', `#${viewName}`);
     }
 
-    // Update nav items
+    // Update nav items (don't highlight for exercise-editor)
     document.querySelectorAll('.admin-nav .nav-item').forEach(item => {
         item.classList.remove('active');
-        if (item.dataset.view === viewName) {
+        const targetView = viewName === 'exercise-editor' ? 'exercises' : viewName;
+        if (item.dataset.view === targetView) {
             item.classList.add('active');
         }
     });
@@ -152,7 +153,11 @@ function showAdminView(viewName) {
     document.querySelectorAll('.admin-view').forEach(view => {
         view.classList.remove('active');
     });
-    document.getElementById(`view-${viewName}`).classList.add('active');
+
+    const viewElement = document.getElementById(`view-${viewName}`);
+    if (viewElement) {
+        viewElement.classList.add('active');
+    }
 
     // Load data for view
     switch (viewName) {
@@ -173,6 +178,9 @@ function showAdminView(viewName) {
             break;
         case 'students':
             loadStudents();
+            break;
+        case 'exercise-editor':
+            // Editor is initialized by openExerciseEditor()
             break;
     }
 }
