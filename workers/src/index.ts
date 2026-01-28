@@ -953,7 +953,7 @@ app.delete('/api/labs/:sessionId', async (c) => {
 // AI ASSISTANT - EXERCISE GENERATION WITH WORKERS AI (LLAMA)
 // =============================================
 
-// POST /api/admin/ai/extract-pdf - Extract text from PDF (basic extraction for now)
+// POST /api/admin/ai/extract-pdf - Extract text from PDF images using Llama 3.2 Vision
 app.post('/api/admin/ai/extract-pdf', async (c) => {
   const userId = c.get('userId');
   if (!userId) {
@@ -962,25 +962,61 @@ app.post('/api/admin/ai/extract-pdf', async (c) => {
 
   try {
     const body = await c.req.json();
-    const { pdf_base64, filename } = body;
+    const { images, filename, num_pages } = body;
 
-    if (!pdf_base64) {
-      return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'PDF requis' } }, 400);
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Images PDF requises' } }, 400);
     }
 
-    // Pour le PDF, on ne peut pas extraire directement avec Workers AI
-    // On retourne un message indiquant d'utiliser TXT ou MD
-    return c.json({
-      success: false,
-      error: {
-        code: 'PDF_NOT_SUPPORTED',
-        message: 'Pour les PDF, veuillez copier-coller le contenu texte dans un fichier .txt ou .md'
+    let extractedText = '';
+
+    // Process each page image with Llama 3.2 Vision
+    for (let i = 0; i < images.length; i++) {
+      const imageBase64 = images[i];
+
+      try {
+        // Use Llama 3.2 Vision for OCR
+        const visionResponse = await c.env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Extrais tout le texte visible de cette image de document. Conserve la structure (titres, paragraphes, listes, code). Retourne uniquement le texte extrait, sans commentaires ni formatage markdown.'
+                },
+                {
+                  type: 'image',
+                  image: imageBase64
+                }
+              ]
+            }
+          ],
+          max_tokens: 4096
+        });
+
+        const pageText = (visionResponse as any).response || '';
+        if (pageText.trim()) {
+          extractedText += `\n--- Page ${i + 1} ---\n${pageText}\n`;
+        }
+      } catch (pageError) {
+        console.error(`Error processing page ${i + 1}:`, pageError);
+        // Continue with other pages
       }
-    }, 400);
+    }
+
+    if (!extractedText.trim()) {
+      return c.json({
+        success: false,
+        error: { code: 'EXTRACTION_FAILED', message: 'Impossible d\'extraire le texte du PDF. Essayez avec un fichier TXT.' }
+      }, 400);
+    }
+
+    return c.json({ success: true, data: { text: extractedText.trim() } });
 
   } catch (error) {
     console.error('PDF extraction error:', error);
-    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur' } }, 500);
+    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur: ' + (error as Error).message } }, 500);
   }
 });
 

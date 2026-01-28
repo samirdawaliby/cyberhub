@@ -949,8 +949,47 @@ async function handleAIFileUpload(event) {
 }
 
 async function extractPDFContent(file) {
-    // Convert file to base64 and send to server for PDF parsing
-    const base64 = await fileToBase64(file);
+    // Initialize PDF.js
+    const pdfjsLib = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Read file as ArrayBuffer
+    const arrayBuffer = await file.arrayBuffer();
+
+    // Load the PDF
+    document.getElementById('ai-processing-status').textContent = 'Chargement du PDF...';
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+    const numPages = Math.min(pdf.numPages, 10); // Limit to 10 pages
+    const images = [];
+
+    // Convert each page to image
+    for (let i = 1; i <= numPages; i++) {
+        document.getElementById('ai-processing-status').textContent = `Conversion page ${i}/${numPages}...`;
+
+        const page = await pdf.getPage(i);
+        const scale = 1.5; // Good quality for OCR
+        const viewport = page.getViewport({ scale });
+
+        // Create canvas
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        // Render page to canvas
+        await page.render({
+            canvasContext: context,
+            viewport: viewport
+        }).promise;
+
+        // Convert canvas to base64 image (JPEG for smaller size)
+        const imageBase64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+        images.push(imageBase64);
+    }
+
+    // Send images to server for Vision AI extraction
+    document.getElementById('ai-processing-status').textContent = 'Extraction du texte avec l\'IA Vision...';
 
     const token = localStorage.getItem('admin_token');
     const response = await fetch(`${API_BASE}/api/admin/ai/extract-pdf`, {
@@ -959,7 +998,11 @@ async function extractPDFContent(file) {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ pdf_base64: base64, filename: file.name })
+        body: JSON.stringify({
+            images: images,
+            filename: file.name,
+            num_pages: numPages
+        })
     });
 
     const data = await response.json();
