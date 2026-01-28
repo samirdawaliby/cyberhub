@@ -480,6 +480,89 @@ document.getElementById('theme-form')?.addEventListener('submit', async (e) => {
 });
 
 // =============================================
+// INLINE THEME CREATOR (in Exercise Editor)
+// =============================================
+
+function openInlineThemeCreator() {
+    document.getElementById('inline-theme-creator').classList.remove('hidden');
+    document.getElementById('inline-theme-name').focus();
+}
+
+function closeInlineThemeCreator() {
+    document.getElementById('inline-theme-creator').classList.add('hidden');
+    // Reset fields
+    document.getElementById('inline-theme-name').value = '';
+    document.getElementById('inline-theme-description').value = '';
+    document.getElementById('inline-theme-team').value = 'red';
+    document.getElementById('inline-theme-icon').value = '';
+}
+
+async function createInlineTheme() {
+    const name = document.getElementById('inline-theme-name').value.trim();
+    const description = document.getElementById('inline-theme-description').value.trim();
+    const team_type = document.getElementById('inline-theme-team').value;
+    const icon = document.getElementById('inline-theme-icon').value.trim() || '📁';
+
+    if (!name) {
+        alert('Veuillez entrer un nom pour la thématique');
+        return;
+    }
+
+    const token = localStorage.getItem('admin_token');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/themes`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name, description, team_type, icon })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Reload themes and select the new one
+            await loadThemes();
+
+            // Select the newly created theme
+            const select = document.getElementById('exercise-theme-select');
+            select.value = data.data.id;
+
+            // Close the inline creator
+            closeInlineThemeCreator();
+
+            // Show success feedback
+            showToast(`Thématique "${name}" créée et sélectionnée`);
+        } else {
+            alert(data.error?.message || 'Erreur lors de la création');
+        }
+    } catch (error) {
+        console.error('Error creating theme:', error);
+        alert('Erreur de connexion au serveur');
+    }
+}
+
+function showToast(message) {
+    // Create toast element if it doesn't exist
+    let toast = document.getElementById('toast-notification');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        toast.className = 'toast-notification';
+        document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.classList.add('show');
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 3000);
+}
+
+// =============================================
 // EDITORS (SuperAdmin only)
 // =============================================
 

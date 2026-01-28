@@ -590,6 +590,126 @@ body.is-superadmin .superadmin-only {
 }
 
 /* =============================================
+   THEME SELECTOR WITH INLINE CREATE
+   ============================================= */
+
+.theme-selector-container {
+    display: flex;
+    gap: 8px;
+}
+
+.theme-selector-container select {
+    flex: 1;
+}
+
+.btn-add-theme {
+    width: 42px;
+    height: 42px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 16px;
+    cursor: pointer;
+    transition: all var(--transition-base);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-add-theme:hover {
+    border-color: var(--blue-primary);
+    background: rgba(37, 99, 235, 0.1);
+    color: var(--blue-primary);
+}
+
+.inline-theme-creator {
+    margin-top: 12px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    animation: fadeInUp var(--transition-base);
+}
+
+.inline-theme-creator.hidden {
+    display: none;
+}
+
+.inline-theme-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.btn-close-inline {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-base);
+}
+
+.btn-close-inline:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger);
+}
+
+.inline-theme-creator .form-group {
+    margin-bottom: 12px;
+}
+
+.inline-theme-creator .form-group:last-of-type {
+    margin-bottom: 16px;
+}
+
+.inline-theme-creator .form-row {
+    margin-bottom: 12px;
+}
+
+.btn-small {
+    padding: 10px 16px;
+    font-size: 13px;
+}
+
+/* =============================================
+   TOAST NOTIFICATION
+   ============================================= */
+
+.toast-notification {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--success);
+    color: white;
+    padding: 14px 24px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    transform: translateY(100px);
+    opacity: 0;
+    transition: all 0.3s ease;
+    z-index: 10000;
+}
+
+.toast-notification.show {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+/* =============================================
    EDITOR CONTENT
    ============================================= */
 
