@@ -1,0 +1,26 @@
+name = "cyberhub-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Base de données D1
+[[d1_databases]]
+binding = "DB"
+database_name = "cyberhub-db"
+database_id = "3d28fa20-7be6-4339-93f8-9545db6b3eb9"
+
+# Sessions KV
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "42e6dfe57dfe476189f7ca9a25079287"
+preview_id = "541491e4f3554d5eb4f68e0a50ed8557"
+
+# Variables d'environnement
+[vars]
+ENVIRONMENT = "production"
+ALLOWED_ORIGINS = "https://cyberhub.pages.dev,http://localhost:3000,http://localhost:8080"
+LAB_TIMEOUT_MINUTES = "120"
+MAX_LABS_PER_STUDENT = "2"
+
+# Secrets (à configurer via wrangler secret)
+# ADMIN_API_KEY = "..."

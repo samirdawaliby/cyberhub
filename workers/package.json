@@ -1,0 +1,22 @@
+{
+  "name": "cyberhub-api",
+  "version": "1.0.0",
+  "description": "CyberHub API - Formation Cybersécurité Red Team & Blue Team",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute cyberhub-db --file=../database/schema.sql",
+    "db:seed": "wrangler d1 execute cyberhub-db --file=../database/seed.sql",
+    "db:migrate:local": "wrangler d1 execute cyberhub-db --local --file=../database/schema.sql",
+    "db:seed:local": "wrangler d1 execute cyberhub-db --local --file=../database/seed.sql"
+  },
+  "dependencies": {
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^3.24.0"
+  }
+}
