@@ -18,7 +18,7 @@ preview_id = "541491e4f3554d5eb4f68e0a50ed8557"
 # Variables d'environnement
 [vars]
 ENVIRONMENT = "production"
-ALLOWED_ORIGINS = "https://cyberhub.pages.dev,http://localhost:3000,http://localhost:8080"
+ALLOWED_ORIGINS = "https://cyberhub-egk.pages.dev,https://cyberhub.pages.dev,http://localhost:3000,http://localhost:8080"
 LAB_TIMEOUT_MINUTES = "120"
 MAX_LABS_PER_STUDENT = "2"
 

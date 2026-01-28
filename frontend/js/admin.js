@@ -2,6 +2,11 @@
 // CYBERHUB ADMIN - MAIN JAVASCRIPT
 // =============================================
 
+// API Base URL
+const API_BASE = window.location.hostname === 'localhost'
+    ? 'http://localhost:8787'
+    : 'https://cyberhub-api.cyberhub-e83.workers.dev';
+
 // State
 let currentUser = null;
 let exercises = [];
@@ -107,8 +112,22 @@ function initAdmin() {
     }
 
     // Load initial data
-    loadDashboard();
     loadThemes();
+
+    // Handle URL hash navigation
+    handleHashNavigation();
+    window.addEventListener('hashchange', handleHashNavigation);
+}
+
+function handleHashNavigation() {
+    const hash = window.location.hash.slice(1) || 'dashboard';
+    const validViews = ['dashboard', 'exercises', 'themes', 'editors', 'activity', 'students'];
+
+    if (validViews.includes(hash)) {
+        showAdminView(hash);
+    } else {
+        showAdminView('dashboard');
+    }
 }
 
 // =============================================
@@ -116,6 +135,11 @@ function initAdmin() {
 // =============================================
 
 function showAdminView(viewName) {
+    // Update URL hash without triggering hashchange
+    if (window.location.hash !== `#${viewName}`) {
+        history.pushState(null, '', `#${viewName}`);
+    }
+
     // Update nav items
     document.querySelectorAll('.admin-nav .nav-item').forEach(item => {
         item.classList.remove('active');
@@ -363,19 +387,57 @@ async function loadThemes() {
 }
 
 async function loadThemesAdmin() {
-    await loadThemes();
-
     const grid = document.getElementById('themes-admin-grid');
-    grid.innerHTML = themes.map(theme => `
-        <div class="theme-admin-card ${theme.team_type}">
-            <h3>${theme.icon} ${theme.name}</h3>
-            <p>${theme.description || 'Aucune description'}</p>
-            <div class="meta">
-                <span>${theme.team_type === 'red' ? '🔴 Red Team' : '🔵 Blue Team'}</span>
-                <span>${theme.exercise_count || 0} exercices</span>
+    grid.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Chargement...</div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/themes`);
+        const data = await response.json();
+        themes = data.data || [];
+
+        if (!themes.length) {
+            grid.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Aucune thématique</div>';
+            return;
+        }
+
+        // Séparer Red et Blue team
+        const redThemes = themes.filter(t => t.team_type === 'red');
+        const blueThemes = themes.filter(t => t.team_type === 'blue');
+
+        grid.innerHTML = `
+            <div class="themes-section">
+                <h3 style="color: var(--red-accent); margin-bottom: 16px;">🔴 Red Team (Offensive)</h3>
+                <div class="themes-cards">
+                    ${redThemes.map(theme => `
+                        <div class="theme-admin-card red">
+                            <h3>${theme.icon || '📁'} ${theme.name}</h3>
+                            <p>${theme.description || 'Aucune description'}</p>
+                            <div class="meta">
+                                <span>${theme.exercise_count || 0} exercices</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
             </div>
-        </div>
-    `).join('');
+            <div class="themes-section" style="margin-top: 32px;">
+                <h3 style="color: var(--blue-accent); margin-bottom: 16px;">🔵 Blue Team (Defensive)</h3>
+                <div class="themes-cards">
+                    ${blueThemes.map(theme => `
+                        <div class="theme-admin-card blue">
+                            <h3>${theme.icon || '📁'} ${theme.name}</h3>
+                            <p>${theme.description || 'Aucune description'}</p>
+                            <div class="meta">
+                                <span>${theme.exercise_count || 0} exercices</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error loading themes:', error);
+        grid.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--danger);">Erreur de chargement</div>';
+    }
 }
 
 function openThemeModal() {

@@ -393,6 +393,20 @@ body.is-superadmin .superadmin-only {
 }
 
 /* =============================================
+   THEMES SECTION
+   ============================================= */
+
+.themes-section {
+    margin-bottom: 24px;
+}
+
+.themes-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+/* =============================================
    EDITORS GRID
    ============================================= */
 
@@ -470,9 +484,7 @@ body.is-superadmin .superadmin-only {
    ============================================= */
 
 .themes-admin-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 20px;
+    display: block;
 }
 
 .theme-admin-card {
