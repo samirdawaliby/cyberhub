@@ -502,9 +502,9 @@ app.post('/api/admin/themes', async (c) => {
     const themeId = `theme-${Date.now()}`;
 
     await c.env.DB.prepare(`
-      INSERT INTO themes (id, name, description, team_type, icon, created_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(themeId, name, description || '', team_type, icon || '📁', userId).run();
+      INSERT INTO themes (id, name, description, team_type, icon)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(themeId, name, description || '', team_type, icon || '📁').run();
 
     await logActivity(c.env.DB, userId, 'create', 'theme', themeId, name);
 
