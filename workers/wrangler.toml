@@ -9,6 +9,10 @@ binding = "DB"
 database_name = "cyberhub-db"
 database_id = "3d28fa20-7be6-4339-93f8-9545db6b3eb9"
 
+# Workers AI
+[ai]
+binding = "AI"
+
 # Sessions KV
 [[kv_namespaces]]
 binding = "SESSIONS"

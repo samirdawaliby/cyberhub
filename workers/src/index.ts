@@ -5,6 +5,7 @@ import { cors } from 'hono/cors';
 type Bindings = {
   DB: D1Database;
   SESSIONS: KVNamespace;
+  AI: Ai;
   ENVIRONMENT: string;
   ALLOWED_ORIGINS: string;
   ADMIN_API_KEY: string;
@@ -949,10 +950,10 @@ app.delete('/api/labs/:sessionId', async (c) => {
 });
 
 // =============================================
-// AI ASSISTANT - EXERCISE GENERATION
+// AI ASSISTANT - EXERCISE GENERATION WITH WORKERS AI (LLAMA)
 // =============================================
 
-// POST /api/admin/ai/extract-pdf - Extract text from PDF
+// POST /api/admin/ai/extract-pdf - Extract text from PDF (basic extraction for now)
 app.post('/api/admin/ai/extract-pdf', async (c) => {
   const userId = c.get('userId');
   if (!userId) {
@@ -967,13 +968,13 @@ app.post('/api/admin/ai/extract-pdf', async (c) => {
       return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'PDF requis' } }, 400);
     }
 
-    // For now, return a message that PDF parsing requires additional setup
-    // In production, you would use a PDF parsing service or library
+    // Pour le PDF, on ne peut pas extraire directement avec Workers AI
+    // On retourne un message indiquant d'utiliser TXT ou MD
     return c.json({
       success: false,
       error: {
         code: 'PDF_NOT_SUPPORTED',
-        message: 'L\'extraction PDF n\'est pas encore disponible. Veuillez utiliser un fichier TXT ou MD.'
+        message: 'Pour les PDF, veuillez copier-coller le contenu texte dans un fichier .txt ou .md'
       }
     }, 400);
 
@@ -983,7 +984,7 @@ app.post('/api/admin/ai/extract-pdf', async (c) => {
   }
 });
 
-// POST /api/admin/ai/generate-exercise - Generate exercise from text content
+// POST /api/admin/ai/generate-exercise - Generate exercise from text content using Workers AI
 app.post('/api/admin/ai/generate-exercise', async (c) => {
   const userId = c.get('userId');
   if (!userId) {
@@ -1001,169 +1002,168 @@ app.post('/api/admin/ai/generate-exercise', async (c) => {
       }, 400);
     }
 
-    // Parse the text content and generate exercise structure
-    const exerciseData = parseContentToExercise(content, filename);
+    // System prompt pour la génération d'exercice
+    const systemPrompt = `Tu es un assistant pédagogique expert en cybersécurité. Tu dois transformer le contenu fourni en un exercice structuré pour la plateforme CyberHub.
+
+IMPORTANT: Tu dois répondre UNIQUEMENT avec un JSON valide, sans aucun texte avant ou après. Pas de markdown, pas d'explication.
+
+Le JSON doit avoir cette structure exacte:
+{
+  "title": "Titre de l'exercice",
+  "description": "Description courte (max 200 caractères)",
+  "difficulty": "débutant",
+  "duration_minutes": 60,
+  "blocks": [
+    {"type": "heading", "level": "h2", "content": "Titre de section"},
+    {"type": "paragraph", "content": "Texte explicatif"},
+    {"type": "code", "language": "bash", "content": "commande exemple"},
+    {"type": "alert", "alertType": "info", "content": "Note importante"},
+    {"type": "terminal", "title": "Terminal", "content": "$ commande"}
+  ],
+  "questions": [
+    {
+      "type": "qcm",
+      "question_text": "Question ?",
+      "points": 10,
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct_answer": "Option A",
+      "hint": "Indice"
+    }
+  ]
+}
+
+Types de blocs: heading, paragraph, code, alert, list, terminal
+Types de questions: qcm, qcm_multiple, text, flag, code, number
+Difficultés: débutant, intermédiaire, avancé, expert
+
+Génère 3-5 questions pertinentes. Réponds UNIQUEMENT avec le JSON.`;
+
+    // Limiter le contenu à 8000 caractères pour rester dans les limites
+    const truncatedContent = content.substring(0, 8000);
+
+    // Appel à Workers AI avec Llama 3.3
+    const aiResponse = await c.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Transforme ce contenu en exercice CyberHub (JSON uniquement):\n\nFichier: ${filename || 'document.txt'}\n\n${truncatedContent}` }
+      ],
+      max_tokens: 4096,
+      temperature: 0.3
+    });
+
+    const responseText = (aiResponse as any).response || '';
+
+    // Parse JSON from response
+    let exerciseData;
+    try {
+      // Try to extract JSON from the response (handle potential markdown wrapping)
+      let jsonStr = responseText;
+
+      // Remove markdown code blocks if present
+      jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+
+      // Find JSON object
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        exerciseData = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No JSON found in response');
+      }
+
+      // Validate required fields
+      if (!exerciseData.title || !exerciseData.blocks) {
+        throw new Error('Missing required fields');
+      }
+
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError, 'Response:', responseText.substring(0, 500));
+
+      // Fallback: create a basic structure from the content
+      exerciseData = createBasicExerciseFromContent(content, filename);
+    }
 
     return c.json({ success: true, data: exerciseData });
 
   } catch (error) {
     console.error('AI generation error:', error);
-    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur' } }, 500);
+    return c.json({ success: false, error: { code: 'SERVER_ERROR', message: 'Erreur serveur: ' + (error as Error).message } }, 500);
   }
 });
 
-// Helper function to parse text content into exercise structure
-function parseContentToExercise(content: string, filename: string) {
+// Fallback function to create basic exercise structure
+function createBasicExerciseFromContent(content: string, filename: string): any {
   const lines = content.split('\n').filter(line => line.trim());
   const blocks: any[] = [];
-  const questions: any[] = [];
 
-  // Extract title from filename or first line
+  // Extract title
   let title = filename?.replace(/\.(txt|md|pdf)$/i, '').replace(/[-_]/g, ' ') || 'Nouvel exercice';
-  if (lines[0] && lines[0].length < 100 && !lines[0].includes('.')) {
+  if (lines[0] && lines[0].length < 100) {
     title = lines[0].replace(/^#+\s*/, '').trim();
   }
 
-  // Detect difficulty based on keywords
+  // Detect difficulty
   let difficulty = 'débutant';
   const contentLower = content.toLowerCase();
-  if (contentLower.includes('avancé') || contentLower.includes('expert') || contentLower.includes('advanced')) {
+  if (contentLower.includes('avancé') || contentLower.includes('expert')) {
     difficulty = 'avancé';
-  } else if (contentLower.includes('intermédiaire') || contentLower.includes('intermediate')) {
+  } else if (contentLower.includes('intermédiaire')) {
     difficulty = 'intermédiaire';
   }
 
-  // Estimate duration based on content length
+  // Estimate duration
   const wordCount = content.split(/\s+/).length;
-  const duration_minutes = Math.min(Math.max(Math.round(wordCount / 100) * 15, 30), 180);
+  const duration_minutes = Math.min(Math.max(Math.round(wordCount / 100) * 15, 30), 120);
 
   // Parse content into blocks
-  let currentBlockContent = '';
-  let currentBlockType = 'paragraph';
   let inCodeBlock = false;
+  let codeContent = '';
   let codeLanguage = 'bash';
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmedLine = line.trim();
+  for (let i = 0; i < Math.min(lines.length, 50); i++) {
+    const line = lines[i].trim();
 
-    // Skip title line
-    if (i === 0 && trimmedLine === title) continue;
-
-    // Detect code blocks
-    if (trimmedLine.startsWith('```')) {
+    if (line.startsWith('```')) {
       if (!inCodeBlock) {
-        // Start code block
-        if (currentBlockContent.trim()) {
-          blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
-          currentBlockContent = '';
-        }
         inCodeBlock = true;
-        codeLanguage = trimmedLine.replace('```', '').trim() || 'bash';
-        currentBlockType = 'code';
+        codeLanguage = line.replace('```', '').trim() || 'bash';
+        codeContent = '';
       } else {
-        // End code block
-        blocks.push({ type: 'code', language: codeLanguage, content: currentBlockContent.trim() });
-        currentBlockContent = '';
+        blocks.push({ type: 'code', language: codeLanguage, content: codeContent.trim() });
         inCodeBlock = false;
-        currentBlockType = 'paragraph';
       }
       continue;
     }
 
     if (inCodeBlock) {
-      currentBlockContent += (currentBlockContent ? '\n' : '') + line;
+      codeContent += line + '\n';
       continue;
     }
 
-    // Detect headings
-    if (trimmedLine.startsWith('#')) {
-      if (currentBlockContent.trim()) {
-        blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
-        currentBlockContent = '';
-      }
-      const level = trimmedLine.match(/^#+/)?.[0].length || 2;
-      blocks.push({
-        type: 'heading',
-        level: `h${Math.min(level, 3)}`,
-        content: trimmedLine.replace(/^#+\s*/, '')
-      });
-      continue;
-    }
-
-    // Detect alerts/notes
-    if (trimmedLine.startsWith('>') || trimmedLine.toLowerCase().startsWith('note:') ||
-        trimmedLine.toLowerCase().startsWith('attention:') || trimmedLine.toLowerCase().startsWith('important:')) {
-      if (currentBlockContent.trim()) {
-        blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
-        currentBlockContent = '';
-      }
-      let alertType = 'info';
-      if (trimmedLine.toLowerCase().includes('attention') || trimmedLine.toLowerCase().includes('warning')) {
-        alertType = 'warning';
-      } else if (trimmedLine.toLowerCase().includes('danger') || trimmedLine.toLowerCase().includes('error')) {
-        alertType = 'danger';
-      } else if (trimmedLine.toLowerCase().includes('astuce') || trimmedLine.toLowerCase().includes('tip')) {
-        alertType = 'tip';
-      }
-      blocks.push({
-        type: 'alert',
-        alertType,
-        content: trimmedLine.replace(/^>\s*/, '').replace(/^(note|attention|important|danger|astuce|tip):\s*/i, '')
-      });
-      continue;
-    }
-
-    // Detect questions (lines ending with ?)
-    if (trimmedLine.endsWith('?') && trimmedLine.length > 20) {
-      // This might be a question for the exercise
-      questions.push({
-        type: 'text',
-        question_text: trimmedLine,
-        points: 10,
-        correct_answer: '',
-        hint: ''
-      });
-    }
-
-    // Detect terminal commands
-    if (trimmedLine.startsWith('$') || trimmedLine.startsWith('#') && trimmedLine.includes(' ')) {
-      if (currentBlockContent.trim()) {
-        blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
-        currentBlockContent = '';
-      }
-      blocks.push({
-        type: 'terminal',
-        title: 'Terminal',
-        content: trimmedLine
-      });
-      continue;
-    }
-
-    // Regular paragraph content
-    if (trimmedLine) {
-      currentBlockContent += (currentBlockContent ? '\n' : '') + trimmedLine;
-    } else if (currentBlockContent.trim()) {
-      blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
-      currentBlockContent = '';
+    if (line.startsWith('#')) {
+      const level = line.match(/^#+/)?.[0].length || 2;
+      blocks.push({ type: 'heading', level: `h${Math.min(level, 3)}`, content: line.replace(/^#+\s*/, '') });
+    } else if (line.length > 20) {
+      blocks.push({ type: 'paragraph', content: line });
     }
   }
 
-  // Don't forget last block
-  if (currentBlockContent.trim()) {
-    blocks.push({ type: currentBlockType, content: currentBlockContent.trim() });
-  }
-
-  // Generate description from first paragraph
-  const firstParagraph = blocks.find(b => b.type === 'paragraph');
-  const description = firstParagraph?.content?.substring(0, 200) || '';
+  // Generate basic questions
+  const questions = [
+    {
+      type: 'text',
+      question_text: `Quel est l'objectif principal de cet exercice sur ${title} ?`,
+      points: 10,
+      correct_answer: '',
+      hint: 'Relisez l\'introduction'
+    }
+  ];
 
   return {
     title,
-    description,
+    description: lines[1]?.substring(0, 200) || 'Exercice généré automatiquement',
     difficulty,
     duration_minutes,
-    blocks,
+    blocks: blocks.length > 0 ? blocks : [{ type: 'paragraph', content: content.substring(0, 1000) }],
     questions
   };
 }
